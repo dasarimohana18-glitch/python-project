@@ -1,0 +1,308 @@
+import sqlite3
+import random
+import time
+
+# ---------------- DATABASE ----------------
+conn = sqlite3.connect("lie_game.db")
+cur = conn.cursor()
+
+# ---------------- PLAYERS TABLE ----------------
+cur.execute("""
+CREATE TABLE IF NOT EXISTS players(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE,
+    score INTEGER DEFAULT 0,
+    lies INTEGER DEFAULT 0,
+    truths INTEGER DEFAULT 0
+)
+""")
+
+# ---------------- QUESTIONS TABLE ----------------
+cur.execute("""
+CREATE TABLE IF NOT EXISTS questions(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    statement TEXT,
+    truth INTEGER
+)
+""")
+
+# ---------------- HISTORY TABLE ----------------
+cur.execute("""
+CREATE TABLE IF NOT EXISTS history(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    player_id INTEGER,
+    question_id INTEGER,
+
+    player TEXT,
+    statement TEXT,
+    guess TEXT,
+    answer TEXT,
+    result TEXT,
+    time_taken REAL,
+
+    FOREIGN KEY(player_id)
+    REFERENCES players(id),
+
+    FOREIGN KEY(question_id)
+    REFERENCES questions(id)
+)
+""")
+
+# ---------------- VIEW ----------------
+cur.execute("""
+CREATE VIEW IF NOT EXISTS leaderboard AS
+SELECT
+    name,
+    score,
+    lies,
+    truths
+FROM players
+ORDER BY score DESC
+""")
+
+conn.commit()
+
+# ---------------- QUESTIONS DATA ----------------
+questions = [
+    ("The Great Wall of China is visible from space.", 0),
+    ("Python was created by Guido van Rossum.", 1),
+    ("Humans have three hearts.", 0),
+    ("Sharks are mammals.", 0),
+    ("Bananas are berries.", 1),
+    ("The moon has its own light.", 0),
+    ("Water boils at 100 degrees Celsius.", 1),
+    ("Lightning never strikes the same place twice.", 0),
+    ("Octopuses have three hearts.", 1),
+    ("Goldfish only remember things for 3 seconds.", 0),
+    ("There are 365 days in a leap year.", 0),
+    ("An ostrich’s eye is bigger than its brain.", 1),
+    ("The Eiffel Tower grows taller in summer.", 1),
+    ("Bats are blind.", 0),
+    ("A day on Venus is longer than a year on Venus.", 1),
+]
+
+# ---------------- INSERT QUESTIONS ONLY ONCE ----------------
+cur.execute("SELECT COUNT(*) FROM questions")
+
+if cur.fetchone()[0] == 0:
+
+    cur.executemany(
+        "INSERT INTO questions(statement, truth) VALUES(?, ?)",
+        questions
+    )
+
+    conn.commit()
+
+# ---------------- FUNCTIONS ----------------
+
+# Add player
+def add_player(name):
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players(name) VALUES(?)",
+        (name,)
+    )
+
+    conn.commit()
+
+# Get player id
+def get_player_id(name):
+
+    cur.execute(
+        "SELECT id FROM players WHERE name = ?",
+        (name,)
+    )
+
+    return cur.fetchone()[0]
+
+# Update score
+def update_score(name, score):
+
+    cur.execute("""
+    UPDATE players
+    SET score = score + ?
+    WHERE name = ?
+    """, (score, name))
+
+    conn.commit()
+
+# Update truths/lies
+def update_stats(name, is_truth):
+
+    if is_truth:
+
+        cur.execute("""
+        UPDATE players
+        SET truths = truths + 1
+        WHERE name = ?
+        """, (name,))
+
+    else:
+
+        cur.execute("""
+        UPDATE players
+        SET lies = lies + 1
+        WHERE name = ?
+        """, (name,))
+
+    conn.commit()
+
+# Insert history
+def insert_history(
+    player_id,
+    question_id,
+    player,
+    statement,
+    guess,
+    answer,
+    result,
+    time_taken
+):
+
+    cur.execute("""
+    INSERT INTO history(
+        player_id,
+        question_id,
+        player,
+        statement,
+        guess,
+        answer,
+        result,
+        time_taken
+    )
+    VALUES(?,?,?,?,?,?,?,?)
+    """, (
+        player_id,
+        question_id,
+        player,
+        statement,
+        guess,
+        answer,
+        result,
+        time_taken
+    ))
+
+    conn.commit()
+
+# Show leaderboard
+def show_leaderboard():
+
+    print("\n🏆 LEADERBOARD")
+    print("-" * 50)
+
+    cur.execute("SELECT * FROM leaderboard")
+
+    rows = cur.fetchall()
+
+    for i, row in enumerate(rows, 1):
+
+        print(
+            f"{i}. {row[0]} | "
+            f"Score: {row[1]} | "
+            f"Lies: {row[2]} | "
+            f"Truths: {row[3]}"
+        )
+
+# ---------------- GAME ----------------
+
+QUESTIONS_PER_PLAYER = 3
+
+print("\n🕵️ TRUTH & LIE GAME")
+
+while True:
+
+    name = input("\nEnter Player Name: ")
+
+    add_player(name)
+
+    player_id = get_player_id(name)
+
+    score = 0
+
+    # Random Questions
+    cur.execute("""
+    SELECT id, statement, truth
+    FROM questions
+    ORDER BY RANDOM()
+    LIMIT ?
+    """, (QUESTIONS_PER_PLAYER,))
+
+    game_questions = cur.fetchall()
+
+    # Ask Questions
+    for no, (question_id, statement, truth) in enumerate(game_questions, 1):
+
+        print(f"\nQ{no}: {statement}")
+
+        start_time = time.time()
+
+        guess = input("Truth or Lie? (t/l): ").lower()
+
+        while guess not in ['t', 'l']:
+
+            guess = input("Enter only t or l: ").lower()
+
+        end_time = time.time()
+
+        time_taken = round(end_time - start_time, 2)
+
+        correct = (
+            (guess == 't' and truth == 1)
+            or
+            (guess == 'l' and truth == 0)
+        )
+
+        answer = "Truth" if truth == 1 else "Lie"
+
+        if correct:
+
+            print("✅ Correct")
+
+            result = "Correct"
+
+            score += 10
+
+            update_score(name, 10)
+
+        else:
+
+            print("❌ Wrong")
+
+            result = "Wrong"
+
+            score -= 5
+
+            update_score(name, -5)
+
+        # Update truth/lie stats
+        update_stats(name, truth == 1)
+
+        # Insert into history table
+        insert_history(
+            player_id,
+            question_id,
+            name,
+            statement,
+            guess,
+            answer,
+            result,
+            time_taken
+        )
+
+        print(f"⭐ Current Score: {score}")
+
+    # Final Score
+    print(f"\n🏁 FINAL SCORE OF {name}: {score}")
+
+    nxt = input("\nNext Player? (y/n): ").lower()
+
+    if nxt != 'y':
+        break
+
+# ---------------- FINAL LEADERBOARD ----------------
+show_leaderboard()
+
+print("\n🎉 GAME OVER")
+
+conn.close()
